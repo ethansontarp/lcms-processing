@@ -351,67 +351,47 @@ def qc_comparison(samples_df, cal_std_df):
             })
 
 #### OUTPUT ####
-def to_excel(compound_dict, output_file, sheet_name="All_Compounds"):
+def create_compound_summary(compound_dict, output_file, summary_sheet_name="LOQ"):
     """
-    Saves Duplication Precision, Spike Precision, QC Precision, and Replicate Statistics
-    for all compounds in a single sheet in an Excel file, with custom formatting.
+    Creates an Excel file with a clean summary sheet containing Compound Names and LOQ values.
 
     Parameters:
     - compound_dict (dict): Dictionary containing processed data for each compound.
+                            Expected format: {"Compound_Name": {"LOQ": <value>}}
     - output_file (str): Path to the output Excel file.
-    - sheet_name (str): Name of the sheet where data will be saved.
+    - summary_sheet_name (str): Name of the summary sheet.
     """
-    with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+    # Prepare data: Only include rows where LOQ exists and filter out NaN, inf, and -inf
+    summary_data = {
+        "Compound": [name for name, data in compound_dict.items() 
+                     if data.get("LOQ") is not None and not pd.isna(data.get("LOQ"))],
+        "LOQ": [data.get("LOQ") for name, data in compound_dict.items() 
+                if data.get("LOQ") is not None and not pd.isna(data.get("LOQ"))]
+    }
+
+    # Convert to DataFrame
+    df = pd.DataFrame(summary_data)
+
+    # Write to Excel
+    with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
         workbook = writer.book
-        worksheet = workbook.add_worksheet(sheet_name)
-        writer.sheets[sheet_name] = worksheet
+        worksheet = workbook.add_worksheet(summary_sheet_name)
+        writer.sheets[summary_sheet_name] = worksheet
 
-        # Define formatting for compound names, table headers, and borders
-        compound_name_format = workbook.add_format({'bold': True, 'font_size': 14})  # Larger, bold compound name
-        header_formats = {
-            "Duplication Precision": workbook.add_format({'bg_color': '#FFDDC1', 'bold': True}),
-            "Spike Precision": workbook.add_format({'bg_color': '#C1E1FF', 'bold': True}),
-            "QC Precision": workbook.add_format({'bg_color': '#D9FFC1', 'bold': True}),
-            "Replicate Statistics": workbook.add_format({'bg_color': '#FFFAC1', 'bold': True}),
-        }
-        
-        start_row = 0  # Track the starting row across all compounds in the same sheet
+        # Define formatting
+        header_format = workbook.add_format({'bold': True, 'font_size': 12, 'bg_color': '#C1E1FF'})
 
-        # Iterate over each compound in the dictionary
-        for compound_name, data in compound_dict.items():
-            col_offset = 1 
-            
-            worksheet.write(start_row, 0, f"Compound: {compound_name}", compound_name_format)
-            start_row += 1 
-            
-            # Function to write a table with bold headers and an outer border
-            def write_table_with_format(df, header, start_row, start_col):
-                df = df.replace([np.nan, np.inf, -np.inf], "N/A")
-                worksheet.write(start_row, start_col, header, header_formats[header])
-                df.to_excel(writer, sheet_name=sheet_name, startrow=start_row+1, startcol=start_col, index=False)
-                end_row = start_row + len(df) + 1 
-                end_col = start_col + len(df.columns) - 1
-                border_format = workbook.add_format({'border': 1})
-                worksheet.conditional_format(start_row, start_col, end_row, end_col, {'type': 'no_errors', 'format': border_format})
+        # Write headers
+        worksheet.write(0, 0, "Compound", header_format)
+        worksheet.write(0, 1, "LOQ", header_format)
 
-            # Write each table with specific header format and outer borders
-            tables = {
-                "Duplication Precision": data.get('Duplication Precision'),
-                "Spike Precision": data.get('Spike Precision'),
-                "QC Precision": data.get('QC Precision'),
-                "Replicate Statistics": data.get('Replicate Statistics')
-            }
-            for table_name, df in tables.items():
-                if isinstance(df, pd.DataFrame) and not df.empty:
-                    write_table_with_format(df, table_name, start_row, col_offset)
-                    col_offset += len(df.columns) + 2 
+        # Write data
+        for idx, row in df.iterrows():
+            worksheet.write(idx + 1, 0, row["Compound"])  # Compound Name
+            if pd.notna(row["LOQ"]) and np.isfinite(row["LOQ"]):  # Check for valid LOQ
+                worksheet.write_number(idx + 1, 1, row["LOQ"])
+            else:
+                worksheet.write(idx + 1, 1, "")  # Leave blank if LOQ is invalid
 
-            start_row += max(
-                len(tables["Duplication Precision"]) if tables["Duplication Precision"] is not None else 0,
-                len(tables["Spike Precision"]) if tables["Spike Precision"] is not None else 0,
-                len(tables["QC Precision"]) if tables["QC Precision"] is not None else 0,
-                len(tables["Replicate Statistics"]) if tables["Replicate Statistics"] is not None else 0,
-                1
-            ) + 4
-
-    print(f"Data for all compounds has been saved to '{output_file}' in the sheet '{sheet_name}'")
+    print(f"Summary sheet saved to '{output_file}' with only valid LOQ rows.")
+ 
