@@ -26,10 +26,26 @@ def process_samples(df: pd.DataFrame) -> pd.DataFrame:
 
 # Calculate the Response Ratio from the Area and ISTD Response columns
 def calculate_response_ratio(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Response Ratio column."""
-    df.loc[:, 'Area'] = pd.to_numeric(df['Area'], errors='coerce')
-    df.loc[:, 'ISTD Response'] = pd.to_numeric(df['ISTD Response'], errors='coerce')
-    df.loc[:, 'Response Ratio'] = df['Area'] / df['ISTD Response']
+    """
+    Add a Response Ratio column to the DataFrame by dividing Area by ISTD Response.
+    Handles invalid data, avoids division by zero, and ensures numeric types.
+
+    Parameters:
+    - df (pd.DataFrame): Input DataFrame with 'Area' and 'ISTD Response' columns.
+
+    Returns:
+    - pd.DataFrame: The updated DataFrame with a 'Response Ratio' column.
+    """
+    # Convert columns to numeric, coercing invalid entries to NaN
+    df['Area'] = pd.to_numeric(df['Area'], errors='coerce')
+    df['ISTD Response'] = pd.to_numeric(df['ISTD Response'], errors='coerce')
+
+    # Safely calculate Response Ratio
+    df['Response Ratio'] = np.where(
+        (df['ISTD Response'] > 0) & (df['ISTD Response'].notna()),  # Valid denominators
+        df['Area'] / df['ISTD Response'],  # Perform safe division
+        np.nan  # Assign NaN for invalid cases
+    )
     return df
 
 # Calculate the calibration curve
@@ -150,14 +166,15 @@ def subtraction(samples_df):
         # Start with the original concentration and then adjust for EB concentration
         adjusted_concentration = concentration
         eb_suffix = filename.split('_EB_')[-1] if '_EB_' in filename else None
+
         if sample_type in {'Smp', 'Dup', 'Spike'} and eb_suffix in eb_concentrations:
             eb_concentration = eb_concentrations[eb_suffix]
-            if eb_concentration == '<LOQ':
-                adjusted_concentration = '<LOQ'
+            if isinstance(eb_concentration, float) and np.isnan(eb_concentration):
+                adjusted_concentration = concentration
             else:
                 adjusted_concentration -= eb_concentration
-                adjusted_concentration = max(adjusted_concentration, 0)  # Set to zero if negative
-            
+                adjusted_concentration = adjusted_concentration if adjusted_concentration >= 0 else np.nan
+
         # Additional subtraction for 'Spike' samples based on Smp identifier
         if sample_type == 'Spike':
             identifier = '_'.join(filename.split('_')[2:-2])
@@ -165,7 +182,7 @@ def subtraction(samples_df):
                 smp_concentration = smp_concentrations[identifier]
                 if smp_concentration != '<LOQ' and adjusted_concentration != '<LOQ':
                     adjusted_concentration -= smp_concentration
-                    adjusted_concentration = max(adjusted_concentration, 0)  # Set to zero if negative
+                    adjusted_concentration = adjusted_concentration if adjusted_concentration >= 0 else np.nan
 
         adjusted_concentrations.append(adjusted_concentration)
 
@@ -179,29 +196,34 @@ def replicate_stats(samples_df):
     For each 'Smp' sample, identifies all replicates with the same sample name based on naming convention.
     Calculates the average and standard deviation of the 'Adjusted Concentration' for each group of replicates.
 
-    Parameters:
-    samples_df (pd.DataFrame): DataFrame containing 'Filename', 'Sample Type', and 'Adjusted Concentration' columns.
-
     Returns:
-    pd.DataFrame: A new DataFrame with 'Sample Name', 'Average Concentration', and 'Standard Deviation' columns.
+        - dict: Dictionary of DataFrames for replicates.
     """
-    # Extract the core sample name based on the naming convention
+    # Extract the core sample name based on the updated naming convention
     def extract_sample_name(row):
         if row['Sample Type'] == 'Smp':
             parts = row['Filename'].split('_')
-            return '_'.join(parts[2:-3])
+            return '_'.join(parts[2:-3])  # Adjusted slicing for naming
         return None
-    
+
+    # Extract sample names and convert Adjusted Concentration to numeric
     samples_df['Sample Name'] = samples_df.apply(extract_sample_name, axis=1)
     samples_df['Adjusted Concentration'] = pd.to_numeric(samples_df['Adjusted Concentration'], errors='coerce')
+
+    # Filter 'Smp' rows with valid 'Sample Name'
     smp_df = samples_df[samples_df['Sample Type'] == 'Smp'].dropna(subset=['Sample Name'])
 
-    # Group by 'Sample Name' and calculate the average and standard deviation of 'Adjusted Concentration'
+    # Group by 'Sample Name' and calculate statistics
     replicate_stats = smp_df.groupby('Sample Name')['Adjusted Concentration'].agg(
-        Average_Concentration='mean', Standard_Deviation='std', Replicate_Count='count'
+        Individual_Concentrations=lambda x: list(x),
+        Average_Concentration='mean',
+        Standard_Deviation='std',
+        Replicate_Count='count'
     ).reset_index()
 
     return replicate_stats
+
+
 
 #### QC ####
 
@@ -264,45 +286,54 @@ def spike_comparison(samples_df):
     """
     precision_results = []
 
-    # Extract 'Control Name' based on Spike and Ctrl naming conventions
-    def extract_sample_name(row):
+    # Extract 'Control Name' and 'Sample Name'
+    def extract_control_name(row):
         if row['Sample Type'] == 'Spike':
             return '_'.join(row['Filename'].split('_')[-4:-2])
         elif row['Sample Type'] == 'Ctrl':
             return '_'.join(row['Filename'].split('_')[1:]) 
         return ""
-    
-    samples_df['Control Name'] = samples_df.apply(extract_sample_name, axis=1)
+
+    def extract_sample_name(row):
+        return '_'.join(row['Filename'].split('_')[2:-4])
+
+    samples_df['Control Name'] = samples_df.apply(extract_control_name, axis=1)
+    samples_df['Sample Name'] = samples_df.apply(extract_sample_name, axis=1)
+
     spike_df = samples_df[samples_df['Sample Type'] == 'Spike']
     ctrl_df = samples_df[samples_df['Sample Type'] == 'Ctrl']
 
+    # Create a dictionary of Ctrl concentrations using 'Control Name' as the key
     ctrl_dict = ctrl_df.set_index('Control Name')['Adjusted Concentration'].to_dict()
     
-    # Compare each 'Spike' sample with the matching 'Ctrl' sample using 'Control Name' as the key
+    # Compare each 'Spike' sample with the matching 'Ctrl' sample
     for idx, row in spike_df.iterrows():
-        sample_name = row['Control Name']
+        control_name = row['Control Name']
+        sample_name = row['Sample Name']
         spike_concentration = row['Adjusted Concentration']
         
-        if sample_name in ctrl_dict:
-            ctrl_concentration = ctrl_dict[sample_name]
+        if control_name in ctrl_dict:
+            ctrl_concentration = ctrl_dict[control_name]
             
             # Calculate the precision in adjusted concentration
             if isinstance(spike_concentration, (int, float)) and isinstance(ctrl_concentration, (int, float)):
                 precision = spike_concentration / ctrl_concentration if ctrl_concentration != 0 else None
                 
-                # Store the results
+                # Store the results with the Sample Name
                 precision_results.append({
-                    'Control Name': sample_name,
+                    'Sample Name': sample_name,
+                    'Control Name': control_name,
                     'Ctrl Concentration': ctrl_concentration,
                     'Spike Concentration': spike_concentration,
                     'Precision': precision
                 })
         else:
             # Debug: Show if a matching Ctrl sample is not found
-            print(f"No matching Ctrl sample found for Spike '{sample_name}'")
+            print(f"No matching Ctrl sample found for Spike '{control_name}'")
 
     spike_precision_df = pd.DataFrame(precision_results)
     return spike_precision_df
+
 
 # For QC samples:
 def qc_comparison(samples_df, cal_std_df):
@@ -350,48 +381,15 @@ def qc_comparison(samples_df, cal_std_df):
                 'Precision': precision
             })
 
-#### OUTPUT ####
-def create_compound_summary(compound_dict, output_file, summary_sheet_name="LOQ"):
-    """
-    Creates an Excel file with a clean summary sheet containing Compound Names and LOQ values.
 
-    Parameters:
-    - compound_dict (dict): Dictionary containing processed data for each compound.
-                            Expected format: {"Compound_Name": {"LOQ": <value>}}
-    - output_file (str): Path to the output Excel file.
-    - summary_sheet_name (str): Name of the summary sheet.
-    """
-    # Prepare data: Only include rows where LOQ exists and filter out NaN, inf, and -inf
-    summary_data = {
-        "Compound": [name for name, data in compound_dict.items() 
-                     if data.get("LOQ") is not None and not pd.isna(data.get("LOQ"))],
-        "LOQ": [data.get("LOQ") for name, data in compound_dict.items() 
-                if data.get("LOQ") is not None and not pd.isna(data.get("LOQ"))]
-    }
 
-    # Convert to DataFrame
-    df = pd.DataFrame(summary_data)
 
-    # Write to Excel
-    with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
-        workbook = writer.book
-        worksheet = workbook.add_worksheet(summary_sheet_name)
-        writer.sheets[summary_sheet_name] = worksheet
 
-        # Define formatting
-        header_format = workbook.add_format({'bold': True, 'font_size': 12, 'bg_color': '#C1E1FF'})
 
-        # Write headers
-        worksheet.write(0, 0, "Compound", header_format)
-        worksheet.write(0, 1, "LOQ", header_format)
 
-        # Write data
-        for idx, row in df.iterrows():
-            worksheet.write(idx + 1, 0, row["Compound"])  # Compound Name
-            if pd.notna(row["LOQ"]) and np.isfinite(row["LOQ"]):  # Check for valid LOQ
-                worksheet.write_number(idx + 1, 1, row["LOQ"])
-            else:
-                worksheet.write(idx + 1, 1, "")  # Leave blank if LOQ is invalid
 
-    print(f"Summary sheet saved to '{output_file}' with only valid LOQ rows.")
- 
+
+
+
+
+
