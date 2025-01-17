@@ -334,8 +334,7 @@ def spike_comparison(samples_df):
     spike_precision_df = pd.DataFrame(precision_results)
     return spike_precision_df
 
-
-# For QC samples:
+#For QC samples:
 def qc_comparison(samples_df, cal_std_df):
     """
     Compares the concentrations of QC samples with corresponding calibration standards.
@@ -348,31 +347,44 @@ def qc_comparison(samples_df, cal_std_df):
     Returns:
     pd.DataFrame: A new DataFrame with the differences between matching 'QC' and 'Calibration' pairs.
     """
-
     precision_results = []
 
-    def extract_calibration_identifier(row):
-        if row['Sample Type'] == 'QC':
-            return '_'.join(row['Filename'].split('_')[2:4])  # Identifier for QC
-        elif row['Sample Type'] == 'Cal':
-            return '_'.join(row['Filename'].split('_')[1:3])  # Identifier for Calibration
-        return None
+    # Extract Calibration Identifiers
+    def qc_calibration_identifier(row):
+        return '_'.join(row['Filename'].split('_')[2:4])  # Identifier for QC
     
-    samples_df['Calibration Identifier'] = samples_df.apply(extract_calibration_identifier, axis=1)
-    cal_std_df['Calibration Identifier'] = cal_std_df.apply(extract_calibration_identifier, axis=1)
-    qc_df = samples_df[samples_df['Sample Type'] == 'QC']
-    cal_dict = cal_std_df.set_index('Calibration Identifier')['Concentration'].to_dict()
+    def cal_calibration_identifier(row):
+        parts = row['Filename'].split('_')
+        if len(parts) > 2:  # Ensure valid structure
+            return '_'.join(parts[1:3])
+        return None
+
+    # Add 'Calibration Identifier' to QC and Calibration DataFrames using assign()
+    qc_df = samples_df[samples_df['Sample Type'] == 'QC'].copy().assign(
+        Calibration_Identifier=lambda x: x.apply(qc_calibration_identifier, axis=1)
+    )
+    cal_std_df = cal_std_df.copy().assign(
+        Calibration_Identifier=lambda x: x.apply(cal_calibration_identifier, axis=1)
+    )
+
+    # Create calibration dictionary
+    cal_dict = cal_std_df.set_index('Calibration_Identifier')['Concentration'].to_dict()
 
     # Compare each QC sample with the matching Calibration standard using the calibration identifier
     for idx, row in qc_df.iterrows():
-        calibration_id = row['Calibration Identifier']
+        calibration_id = row['Calibration_Identifier']
         qc_concentration = row['Adjusted Concentration']
         
         if calibration_id in cal_dict:
             cal_concentration = cal_dict[calibration_id]
             
-            # Calculate the precision
-            precision = cal_concentration / qc_concentration if qc_concentration != 0 else None
+            # Handle cases where calibration concentration is '<LOQ' or 0
+            if cal_concentration == '<LOQ' or cal_concentration == 0:
+                precision = "Can't calculate accuracy"
+            elif pd.notna(qc_concentration):
+                precision = cal_concentration / qc_concentration if qc_concentration != 0 else None
+            else:
+                precision = None
             
             precision_results.append({
                 'Calibration Identifier': calibration_id,
@@ -380,16 +392,13 @@ def qc_comparison(samples_df, cal_std_df):
                 'QC Concentration': qc_concentration,
                 'Precision': precision
             })
+        else:
+            precision_results.append({
+                'Calibration Identifier': calibration_id,
+                'Calibration Concentration': None,
+                'QC Concentration': qc_concentration,
+                'Precision': "Calibration Excluded"
+            })
 
-
-
-
-
-
-
-
-
-
-
-
-
+    qc_precision_df = pd.DataFrame(precision_results)
+    return qc_precision_df
