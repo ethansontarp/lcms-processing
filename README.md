@@ -7,3 +7,5 @@
 **name_replacement.ipynb** is an _Interactive Python Notebook_ which can be used to easily reformat sample names to be compatible with the processing script.
 
 **LC-MS Procedural Naming Guide.docx** is a _Word Document_ which provides instructions for how to designate each type of measurement (calibration, blank, control, sample, duplicate, spike, extraction blank, quality control, and wash) to be compatible with the processing script.
+
+_Written by Ethan J. Sontarp and Colin P. Thackray_
