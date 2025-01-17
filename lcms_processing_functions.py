@@ -395,9 +395,9 @@ def qc_comparison(samples_df, cal_std_df):
         else:
             precision_results.append({
                 'Calibration Identifier': calibration_id,
-                'Calibration Concentration': None,
+                'Calibration Concentration': 'Calibration Excluded',
                 'QC Concentration': qc_concentration,
-                'Precision': "Calibration Excluded"
+                'Precision': "NaN"
             })
 
     qc_precision_df = pd.DataFrame(precision_results)
