@@ -26,6 +26,76 @@ def create_loq_dataframe(compound_dict):
     
     return df_loq_pivot
 
+def create_peak_area_dataframe(compound_dict):
+    """
+    Creates a DataFrame for the Peak Area sheet, with compounds as columns.
+    """
+
+    peak_area_data = []
+    for compound, data in compound_dict.items():
+        if "Cal Std" in data and isinstance(data["Cal Std"], pd.DataFrame) and not data["Cal Std"].empty:
+            cal_std_df = data["Cal Std"].copy()
+            cal_std_df["Sample Name"] = cal_std_df["Filename"]
+            cal_std_df = cal_std_df[["Filename", "Sample Name", "Area"]]
+            cal_std_df["Compound"] = compound
+            peak_area_data.append(cal_std_df)
+
+        if "Sample" in data and isinstance(data["Sample"], pd.DataFrame) and not data["Sample"].empty:
+            sample_df = data["Sample"].copy()
+            sample_df["Sample Name"] = sample_df["Filename"]
+            sample_df = sample_df[["Filename", "Sample Name", "Area"]]
+            sample_df["Compound"] = compound
+            peak_area_data.append(sample_df)
+
+    if peak_area_data:
+        df_peak_area = pd.concat(peak_area_data, ignore_index=True)
+        # Pivot using Filename
+        df_peak_area_wide = df_peak_area.pivot(index="Filename", columns="Compound", values="Area").reset_index()
+        # Replace Filename with Sample Name after pivoting
+        sample_name_map = df_peak_area.set_index("Filename")["Sample Name"].to_dict()
+        df_peak_area_wide["Filename"] = df_peak_area_wide["Filename"].map(sample_name_map)
+        compound_order = ["Filename"] + list(compound_dict.keys())
+        df_peak_area_wide = df_peak_area_wide.reindex(columns=compound_order).fillna("N/A")
+    else:
+        df_peak_area_wide = pd.DataFrame()
+    
+    return df_peak_area_wide
+
+def create_raw_concentrations_dataframe(compound_dict):
+    """
+    Creates a DataFrame for the Pre-Subtracted Cocnentratins sheet, with compounds as columns.
+    """
+
+    raw_concentrations_data = []
+    for compound, data in compound_dict.items():
+        if "Cal Std" in data and isinstance(data["Cal Std"], pd.DataFrame) and not data["Cal Std"].empty:
+            cal_std_df = data["Cal Std"].copy()
+            cal_std_df["Sample Name"] = cal_std_df["Filename"]
+            cal_std_df = cal_std_df[["Filename", "Sample Name", "Pre-Subtracted Concentration"]]
+            cal_std_df["Compound"] = compound
+            raw_concentrations_data.append(cal_std_df)
+
+        if "Sample" in data and isinstance(data["Sample"], pd.DataFrame) and not data["Sample"].empty:
+            sample_df = data["Sample"].copy()
+            sample_df["Sample Name"] = sample_df["Filename"]
+            sample_df = sample_df[["Filename", "Sample Name", "Pre-Subtracted Concentration"]]
+            sample_df["Compound"] = compound
+            raw_concentrations_data.append(sample_df)
+
+    if raw_concentrations_data:
+        df_raw_concentrations = pd.concat(raw_concentrations_data, ignore_index=True)
+        # Pivot using Filename
+        df_raw_concentrations_wide = df_raw_concentrations.pivot(index="Filename", columns="Compound", values="Pre-Subtracted Concentration").reset_index()
+        # Replace Filename with Sample Name after pivoting
+        sample_name_map = df_raw_concentrations.set_index("Filename")["Sample Name"].to_dict()
+        df_raw_concentrations_wide["Filename"] = df_raw_concentrations_wide["Filename"].map(sample_name_map)
+        compound_order = ["Filename"] + list(compound_dict.keys())
+        df_raw_concentrations_wide = df_raw_concentrations_wide.reindex(columns=compound_order).fillna("N/A")
+    else:
+        df_raw_concentrations_wide = pd.DataFrame()
+    
+    return df_raw_concentrations_wide
+
 def create_smp_concentrations_dataframe(compound_dict):
     """
     Creates a DataFrame for the Concentrations sheet.
@@ -34,8 +104,8 @@ def create_smp_concentrations_dataframe(compound_dict):
     for compound, data in compound_dict.items():
         if "Sample" in data and isinstance(data["Sample"], pd.DataFrame) and not data["Sample"].empty:
             sample_df = data["Sample"].copy()
-            sample_df["Sample Name"] = sample_df["Filename"].apply(lambda x: "_".join(x.split("_")[2:-2]))
-            sample_df = sample_df[sample_df["Filename"].str.contains("_Smp_")]  # Filter only 'Smp' samples
+            sample_df["Sample Name"] = sample_df["Filename"].apply(lambda x: "_".join(x.split("_")[1:-2]))
+            sample_df = sample_df[sample_df["Filename"].str.contains(r"_Smp_|_Dup_|_Spike_|_Ctrl_", regex=True)]
             sample_df = sample_df[["Filename", "Sample Name", "Adjusted Concentration"]]
             sample_df["Compound"] = compound
             smp_concentration_data.append(sample_df)

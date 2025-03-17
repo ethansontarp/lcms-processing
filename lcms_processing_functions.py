@@ -14,6 +14,8 @@ def process_calibration(df: pd.DataFrame) -> pd.DataFrame:
     cal_std_df = calculate_response_ratio(cal_std_df)
     LOQ = cal_std_df['Theoretical Amt'].min()
 
+    cal_std_df['Pre-Subtracted Concentration'] = np.nan  
+
     return cal_std_df, LOQ
 
 # Process all samples which are not for Calibration
@@ -22,6 +24,7 @@ def process_samples(df: pd.DataFrame) -> pd.DataFrame:
     samples_df = df[df['Sample Type'] == 'Unknown']
     samples_df = samples_df[samples_df['Peak Label'] == 'T1']
     samples_df = calculate_response_ratio(samples_df)
+    samples_df['Pre-Subtracted Concentration'] = np.nan  
     return samples_df
 
 # Calculate the Response Ratio from the Area and ISTD Response columns
@@ -87,9 +90,11 @@ def calculate_concentrations(df: pd.DataFrame, LOQ: float, cal_curve: Union[Dict
     
     # Proceed with calculation if cal_curve has valid data
     slope, intercept = cal_curve['slope'], cal_curve['intercept']
-    df.loc[:, 'Concentration'] = ((df['Response Ratio']).astype(float) - intercept) / slope
-    
-    # Set concentrations below the LOQ to NaN
+
+    # Create separate pre-subtracted concentration column before assigning <LOQ
+    df = df.copy()
+    df['Pre-Subtracted Concentration'] = ((df['Response Ratio']).astype(float) - intercept) / slope
+    df.loc[:, 'Concentration'] = df['Pre-Subtracted Concentration']
     if LOQ is not None:
         df.loc[df['Concentration'] < LOQ, 'Concentration'] = np.nan
     
@@ -189,41 +194,6 @@ def subtraction(samples_df):
     samples_df['Adjusted Concentration'] = adjusted_concentrations
 
     return samples_df
-
-# Calculate statistics on replicate samples
-def replicate_stats(samples_df):
-    """
-    For each 'Smp' sample, identifies all replicates with the same sample name based on naming convention.
-    Calculates the average and standard deviation of the 'Adjusted Concentration' for each group of replicates.
-
-    Returns:
-        - dict: Dictionary of DataFrames for replicates.
-    """
-    # Extract the core sample name based on the updated naming convention
-    def extract_sample_name(row):
-        if row['Sample Type'] == 'Smp':
-            parts = row['Filename'].split('_')
-            return '_'.join(parts[2:-3])  # Adjusted slicing for naming
-        return None
-
-    # Extract sample names and convert Adjusted Concentration to numeric
-    samples_df['Sample Name'] = samples_df.apply(extract_sample_name, axis=1)
-    samples_df['Adjusted Concentration'] = pd.to_numeric(samples_df['Adjusted Concentration'], errors='coerce')
-
-    # Filter 'Smp' rows with valid 'Sample Name'
-    smp_df = samples_df[samples_df['Sample Type'] == 'Smp'].dropna(subset=['Sample Name'])
-
-    # Group by 'Sample Name' and calculate statistics
-    replicate_stats = smp_df.groupby('Sample Name')['Adjusted Concentration'].agg(
-        Individual_Concentrations=lambda x: list(x),
-        Average_Concentration='mean',
-        Standard_Deviation='std',
-        Replicate_Count='count'
-    ).reset_index()
-
-    return replicate_stats
-
-
 
 #### QC ####
 
@@ -363,6 +333,7 @@ def qc_comparison(samples_df, cal_std_df):
     qc_df = samples_df[samples_df['Sample Type'] == 'QC'].copy().assign(
         Calibration_Identifier=lambda x: x.apply(qc_calibration_identifier, axis=1)
     )
+    
     cal_std_df = cal_std_df.copy().assign(
         Calibration_Identifier=lambda x: x.apply(cal_calibration_identifier, axis=1)
     )
