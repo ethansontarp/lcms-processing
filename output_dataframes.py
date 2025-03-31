@@ -118,7 +118,7 @@ def create_smp_concentrations_dataframe(compound_dict):
         sample_name_map = df_smp_concentrations.set_index("Filename")["Sample Name"].to_dict()
         df_smp_concentrations_wide["Filename"] = df_smp_concentrations_wide["Filename"].map(sample_name_map)
         compound_order = ["Filename"] + list(compound_dict.keys())
-        df_smp_concentrations_wide = df_smp_concentrations_wide.reindex(columns=compound_order).fillna("<LOQ")
+        df_smp_concentrations_wide = (df_smp_concentrations_wide.reindex(columns=compound_order).astype("object").fillna("<LOQ"))
     else:
         df_smp_concentrations_wide = pd.DataFrame()
     

@@ -52,18 +52,25 @@ def calculate_response_ratio(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # Calculate the calibration curve
-def get_calibration_curve(cal_std_df: pd.DataFrame, LOQ: float) -> Dict[str, float]:
+def get_calibration_curve(cal_std_df: pd.DataFrame, LOQ: float, weighting_scheme: str = "standard") -> Union[Dict[str, float], None]:
     valid_data = cal_std_df[cal_std_df['Theoretical Amt'].notna() & cal_std_df['Response Ratio'].notna()]
-
+    
     if len(valid_data) > 1:
+        X = valid_data[['Theoretical Amt']]
+        y = valid_data['Response Ratio']
+
+        # decide the weighting scheme - if inverse, use 1/X
+        if weighting_scheme == "inverse":
+           weights = 1 / valid_data['Theoretical Amt'].replace(0, pd.NA).bfill()
+        else:  # default to standard
+            weights = pd.Series(1, index=valid_data.index)
+
         model = LinearRegression()
-        model.fit(valid_data[['Theoretical Amt']], valid_data['Response Ratio'])
-        slope = model.coef_[0]
-        intercept = model.intercept_
+        model.fit(X, y, sample_weight=weights)
 
         return {
-            'slope': slope,
-            'intercept': intercept
+            'slope': model.coef_[0],
+            'intercept': model.intercept_
         }
     else:
         return None
